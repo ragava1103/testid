@@ -1,9 +1,8 @@
 import pandas as pd
-import re
 import logging
+import re
 
-
-def id_processing(filepath, id_name, COMM, testid):
+def id_processing(filepath, id_name, COMM, testid, step):
     """
     Process a list of test IDs, extract specific patterns, match with an Excel file,
     and save the results to a new Excel file.
@@ -13,12 +12,17 @@ def id_processing(filepath, id_name, COMM, testid):
         id_name (str): Column name in the Excel file to match with extracted names.
         COMM (str): Column to extract data from the Excel file.
         testid (list): List of test ID strings.
+        step (list): List of associated step strings.
 
     Returns:
         pd.DataFrame or None: Extracted results if successful, None otherwise.
     """
-    if not isinstance(testid, list):
-        logging.error("Invalid input: testid must be a list.")
+    if not isinstance(testid, list) or not isinstance(step, list):
+        logging.error("Invalid input: testid and step must be lists.")
+        return None
+
+    if len(testid) != len(step):
+        logging.error("Length mismatch: testid and step lists must have the same length.")
         return None
 
     if not testid:
@@ -26,14 +30,14 @@ def id_processing(filepath, id_name, COMM, testid):
         return None
 
     # Initialize result dictionary
-    result = {"number": [], "name": []}
+    result = {"number": [], "name": [], "checker": []}
 
-    # Iterate over test IDs to extract numbers and names
-    for tes_id in testid:
-        logging.info(f"Processing test ID: {tes_id}")
+    # Process test IDs and step together
+    for tes_id, stp in zip(testid, step):
+        logging.info(f"Processing test ID: {tes_id} with step: {stp}")
         try:
-            if not isinstance(tes_id, str):
-                logging.warning(f"Skipping non-string item: {tes_id}")
+            if not isinstance(tes_id, str) or not isinstance(stp, str):
+                logging.warning(f"Skipping invalid pair: ({tes_id}, {stp})")
                 continue
 
             # Extract number from "LCD_CXL_<number>"
@@ -42,12 +46,17 @@ def id_processing(filepath, id_name, COMM, testid):
                 extracted_number = match.group(1)
                 result["number"].append(extracted_number)
                 logging.info(f"Extracted number: {extracted_number}")
+            else:
+                result["number"].append(None)  # Add placeholder if no match
 
             # Extract name after ':'
-            if ':' in tes_id:
-                extracted_name = tes_id.split(":", 1)[1].strip()
-                result["name"].append(extracted_name)
-                logging.info(f"Extracted name: {extracted_name}")
+            extracted_name = tes_id.split(":", 1)[1].strip() if ':' in tes_id else None
+            result["name"].append(extracted_name)
+            logging.info(f"Extracted name: {extracted_name}")
+
+            # Append step
+            result["checker"].append(stp)
+            logging.info(f"Extracted step: {stp}")
 
         except Exception as e:
             logging.error(f"Error processing test ID '{tes_id}': {e}")
@@ -59,23 +68,27 @@ def id_processing(filepath, id_name, COMM, testid):
 
     # Read the Excel file
     try:
-        sheets = pd.read_excel(filepath, sheet_name="Steps")
-        df = sheets
+        df = pd.read_excel(filepath, sheet_name="Steps")
 
         # Check if required columns exist
         if id_name not in df.columns or COMM not in df.columns:
             logging.error(f"One or more specified columns ('{id_name}', '{COMM}') not found in the Excel file.")
             return None
 
-        # Filter DataFrame based on extracted names
+        # Filter DataFrame based on extracted names and steps
         matched_results = []
-        for name, number in zip(result["name"], result["number"]):
+        for name, number, checker in zip(result["name"], result["number"], result["checker"]):
+            if not name:
+                continue
+
             logging.info(f"Matching string: {name}")
             filtered_df = df[df[id_name].astype(str).str.contains(name, case=False, na=False)]
             if not filtered_df.empty:
-                # Add 'number' as a new column to the filtered DataFrame
+                # Add 'number' and 'checker' columns to the filtered DataFrame
+                filtered_df = filtered_df[[id_name, COMM]].copy()
                 filtered_df["Extracted_Number"] = number
-                matched_results.append(filtered_df[[id_name, COMM, "Extracted_Number"]])
+                filtered_df["Checker"] = checker
+                matched_results.append(filtered_df)
 
         # Combine results into a single DataFrame
         if matched_results:
